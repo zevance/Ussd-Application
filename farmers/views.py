@@ -10,7 +10,7 @@ from datetime import datetime
 
 # Payment Configuration
 API_BASE_URL = "https://chiweto.ch/insurance/api"
-API_KEY = "eyJraWQiOiIxIiwiYWxnIjoiSFMyNTYifQ.eyJqdGkiOiIwMzIzNWFmOS1lODA0LTQwNTMtYTI0Yy03Y2NmZDkxODE4YTIiLCJzdWIiOiIzMTciLCJpYXQiOjE2OTYzMjg2OTMsImV4cCI6MjAxMTk0Nzg5MywicG0iOiJEQUYsUEFGIiwidHQiOiJBQVQifQ.lXGqVT0Z2jew1nqP6jrv_Y8s7XUCDCclJS3wzRBtSbg" 
+API_KEY = "" 
 
 # Add a mapping for previous steps at the top of the file
 PREVIOUS_STEP_MAP = {
