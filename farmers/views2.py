@@ -10,20 +10,8 @@ from datetime import datetime
 
 # Payment Configuration
 API_BASE_URL = "https://chiweto.ch/insurance/api"
-API_KEY = ""
+API_KEY = "eyJraWQiOiIxIiwiYWxnIjoiSFMyNTYifQ.eyJqdGkiOiIwMzIzNWFmOS1lODA0LTQwNTMtYTI0Yy03Y2NmZDkxODE4YTIiLCJzdWIiOiIzMTciLCJpYXQiOjE2OTYzMjg2OTMsImV4cCI6MjAxMTk0Nzg5MywicG0iOiJEQUYsUEFGIiwidHQiOiJBQVQifQ.lXGqVT0Z2jew1nqP6jrv_Y8s7XUCDCclJS3wzRBtSbg" 
 
-# USSD Call Initiation Configuration
-# Set to True to attempt direct call initiation, False for manual call instruction
-ENABLE_USSD_CALL_INITIATION = True
-# Call initiation method: 0=CALL:, 1=DIAL:, 2=*number#, 3=tel:
-CALL_INITIATION_METHOD = 3
-
-# SMS gateway (direct send) configuration
-SMS_API_ENDPOINT = "https://chiweto.ch/api/messages/send"
-# TODO: set your production token here
-SMS_API_TOKEN = "" 
-SMS_SOURCE = "Chiweto"
-SMS_USER_ID = 29
 # Add a mapping for previous steps at the top of the file
 PREVIOUS_STEP_MAP = {
     2: 1,  # Gender -> Name
@@ -56,6 +44,94 @@ def normalize_msisdn(msisdn):
         return '+' + msisdn
     else:
         return None
+
+def call_advisor_flow(session, msisdn, msg):
+    """Handles the Itanani Mlangizi (Call Advisor) flow."""
+    # Normalize MSISDN
+    normalized_msisdn = normalize_msisdn(msisdn)
+    if not normalized_msisdn:
+        return generate_response_xml("Nambala ya foni yolakwika. Yesaninso.", 2)
+    
+    try:
+        # If vet list not displayed yet, fetch vets from API
+        if 'vet_list_displayed' not in session:
+            # Call the PHP API to get vets for this farmer
+            api_url = "https://your-api-domain.com/api/initiate-vet-call"  # Replace with your actual API URL
+            payload = {
+                'phone_number': normalized_msisdn
+            }
+            
+            response = requests.post(api_url, json=payload, timeout=10)
+            response.raise_for_status()
+            api_data = response.json()
+            
+            if response.status_code == 200 and 'vets' in api_data:
+                vets = api_data['vets']
+                
+                if not vets:
+                    return generate_response_xml(
+                        "Palibe mlangizi wapezeka pa chipatala chanu. Chonde lemberani chipatala chanu.",
+                        2
+                    )
+                
+                # Store vets in session for selection
+                session['available_vets'] = vets
+                session['vet_list_displayed'] = True
+                session.modified = True
+                
+                # Display vet list
+                response_msg = "Sankhani mlangizi:\n"
+                for idx, vet in enumerate(vets, 1):
+                    vet_name = vet.get('name', vet.get('username', f'Mlangizi {idx}'))
+                    response_msg += f"{idx}. {vet_name}\n"
+                response_msg += "0. Bwelerani\n00. Bwelerani Koyambilira"
+                
+                return generate_response_xml(response_msg, 2)
+            else:
+                error_msg = api_data.get('error', 'Palibe mlangizi wapezeka.')
+                return generate_response_xml(f"{error_msg}\n0. Bwelerani\n00. Bwelerani Koyambilira", 2)
+        
+        # Handle vet selection
+        if msg == '0':  # Back
+            session.pop('vet_list_displayed', None)
+            session.pop('available_vets', None)
+            session['current_step'] = 'registered_menu'
+            session.modified = True
+            return handle_registered_user_menu(session)
+        elif msg == '00':  # Home
+            session.pop('vet_list_displayed', None)
+            session.pop('available_vets', None)
+            session['current_step'] = 1
+            session.modified = True
+            return handle_restart()
+        elif msg.isdigit() and 1 <= int(msg) <= len(session.get('available_vets', [])):
+            # Get selected vet
+            selected_vet = session['available_vets'][int(msg) - 1]
+            vet_username = selected_vet.get('username')
+            
+            if not vet_username:
+                return generate_response_xml(
+                    "Nambala ya mlangizi silipo. Sankhani mlangizi wina.",
+                    2
+                )
+            
+            # Clean up session
+            session.pop('vet_list_displayed', None)
+            session.pop('available_vets', None)
+            session.modified = True
+            
+            # Return vet's username/phone for call initiation
+            # You might need to adjust this based on how your system handles calls
+            return generate_response_xml(vet_username, 3)
+        else:
+            return generate_response_xml(
+                "Chisankho chosayenera. Sankhani mlangizi woyenera.",
+                2
+            )
+            
+    except Exception as e:
+        print(f"Error in call_advisor_flow: {str(e)}")
+        return generate_response_xml("Zolakwika zidachitika. Yesaninso.", 2)
 
 @csrf_exempt
 def handle_ussd(request):
@@ -170,7 +246,7 @@ def handle_ussd(request):
                 elif msg == '2':
                     session['current_step'] = 'call_advisor'
                     session.modified = True
-                    return call_advisor_flow(session, msisdn, "")
+                    return generate_response_xml("Lowetsani nambala ya mlangizi:", 2)
                 elif msg == '3':
                     session['current_step'] = 'policy_status_menu'
                     session.modified = True
@@ -301,178 +377,12 @@ def handle_ussd(request):
             elif current_step == 'call_advisor':
                 return call_advisor_flow(session, msisdn, msg)
 
-            # Removed 'vet_call_options' flow; notification happens on selection
-
         return generate_response_xml("Zolakwika zidachitika. Yesaninso.", 2)
 
     except Exception as e:
         print(f"USSD Handler Error: {str(e)} - {type(e)}")
         return generate_response_xml("Service currently unavailable. Please try again later.", 2)
-    
 
-# ====== CALL VET FUNCTION ======
-def call_advisor_flow(session, msisdn, msg):
-    """Handles the Itanani Mlangizi (Call Advisor) flow."""
-    # Normalize MSISDN
-    normalized_msisdn = normalize_msisdn(msisdn)
-    if not normalized_msisdn:
-        return generate_response_xml("Nambala ya foni yolakwika. Yesaninso.", 2)
-    
-    try:
-        # If vet list not displayed yet, fetch vets from API
-        if 'vet_list_displayed' not in session:
-            # Call the PHP API to get vets for this farmer
-            url = f"{API_BASE_URL}/contacts/vet?phone_number={normalized_msisdn}"
-            
-            response = requests.post(url, timeout=10)
-            response.raise_for_status()
-            api_data = response.json()
-            
-            if response.status_code == 200 and 'vets' in api_data:
-                vets = api_data['vets']
-                
-                if not vets:
-                    return generate_response_xml(
-                        "Palibe mlangizi wapezeka pa EPA chanu. Chonde lemberani chipatala chanu.",
-                        2
-                    )
-                
-                # Store vets in session for selection
-                session['available_vets'] = vets
-                session['vet_list_displayed'] = True
-                session.modified = True
-                
-                # Display vet list
-                response_msg = "Sankhani mlangizi:\n"
-                for idx, vet in enumerate(vets, 1):
-                    vet_name = vet.get('name', vet.get('username', f'Mlangizi {idx}'))
-                    response_msg += f"{idx}. {vet_name}\n"
-                response_msg += "0. Bwelerani\n00. Bwelerani Koyambilira"
-                
-                return generate_response_xml(response_msg, 2)
-            else:
-                error_msg = api_data.get('error', 'Palibe mlangizi wapezeka.')
-                return generate_response_xml(f"{error_msg}\n0. Bwelerani\n00. Bwelerani Koyambilira", 2)
-        
-        # Handle vet selection
-        if msg == '0':  # Back
-            session.pop('vet_list_displayed', None)
-            session.pop('available_vets', None)
-            session['current_step'] = 'registered_menu'
-            session.modified = True
-            return handle_registered_user_menu(session)
-        elif msg == '00':  # Home
-            session.pop('vet_list_displayed', None)
-            session.pop('available_vets', None)
-            session['current_step'] = 1
-            session.modified = True
-            return handle_restart()
-        elif msg.isdigit() and 1 <= int(msg) <= len(session.get('available_vets', [])):
-            # Get selected vet
-            selected_vet = session['available_vets'][int(msg) - 1]
-            vet_username = selected_vet.get('username')
-            
-            if not vet_username:
-                return generate_response_xml(
-                    "Nambala ya mlangizi silipo. Sankhani mlangizi wina.",
-                    2
-                )
-            # Directly send SMS to the vet (bypass Laravel)
-            notify_success = False
-            try:
-                farmer_display = normalize_msisdn(msisdn) or msisdn
-                vet_name = selected_vet.get('name', selected_vet.get('username', 'Mlangizi'))
-                message_text = (
-                    f"Hello {vet_name}, kasitomala {farmer_display} akufunika thandizo lanu. Chonde ayendereni."
-                )
-                notify_success = send_sms_direct(vet_username, message_text)
-            except Exception as e:
-                print(f"Warning: Direct SMS send failed: {str(e)}")
-
-            # Clean up session and end with confirmation
-            session.pop('vet_list_displayed', None)
-            session.pop('available_vets', None)
-            session['current_step'] = 'end'
-            session.modified = True
-
-            vet_name = selected_vet.get('name', selected_vet.get('username', 'Mlangizi'))
-            if notify_success:
-                confirmation_message = f"Uthenga watumizidwa kwa {vet_name}. Akuyendelani posachedwa."
-            else:
-                confirmation_message = (
-                    f"Sitinathe kutumiza uthenga kwa {vet_name}. Mungawayitane pa {vet_username}."
-                )
-            return generate_response_xml(confirmation_message, 3)
-        else:
-            return generate_response_xml(
-                "Chisankho chosayenera. Sankhani mlangizi woyenera.",
-                2
-            )
-            
-    except Exception as e:
-        print(f"Error in call_advisor_flow: {str(e)}")
-        return generate_response_xml("Zolakwika zidachitika. Yesaninso.", 2)
-
-# ====== Direct SMS send helper ======
-def _build_msisdn_candidates(phone: str):
-    p = (phone or "").strip()
-    digits = ''.join(ch for ch in p if ch.isdigit() or ch == '+')
-    raw = digits.lstrip('+')
-    cands = []
-    if raw.startswith('265') and len(raw) in (12, 13):
-        cands = [
-            '+' + raw,
-            raw,
-            '0' + raw[-9:],
-        ]
-    elif p.startswith('+265') and len(raw) == 12:
-        cands = [p, raw, '0' + raw[-9:]]
-    elif p.startswith('0') and len(raw) >= 9:
-        cands = ['+265' + raw[-9:], '265' + raw[-9:], p]
-    else:
-        # Fallbacks
-        if len(raw) >= 9:
-            last9 = raw[-9:]
-            cands = ['+265' + last9, '265' + last9, '0' + last9]
-        else:
-            cands = [p]
-    # Deduplicate preserving order
-    seen = set()
-    uniq = []
-    for c in cands:
-        if c not in seen:
-            uniq.append(c)
-            seen.add(c)
-    return uniq
-
-def send_sms_direct(vet_phone: str, message_text: str) -> bool:
-    if not SMS_API_TOKEN:
-        print("SMS_API_TOKEN is not configured")
-        return False
-    headers = {
-        "Authorization": f"Bearer {SMS_API_TOKEN}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-    for dest in _build_msisdn_candidates(vet_phone):
-        payload = {
-            "source": SMS_SOURCE,
-            "user_id": SMS_USER_ID,
-            "destination": dest,
-            "content": message_text,
-            "is_scheduled": False,
-        }
-        try:
-            resp = requests.post(SMS_API_ENDPOINT, headers=headers, json=payload, timeout=10)
-            print(f"Direct SMS to {dest} status={resp.status_code}, body={resp.text[:300]}")
-            if 200 <= resp.status_code < 300:
-                return True
-        except Exception as e:
-            print(f"Direct SMS send exception for {dest}: {str(e)}")
-    return False
-
-## Removed: handle_vet_call_options (logic now handled directly in call_advisor_flow)
-    
 # ====== POLICY STATUS FUNCTIONS ======
 
 def handle_policy_status(session, user_input, msisdn, status):
@@ -1355,9 +1265,9 @@ def process_buy_policy_payment(user_input, session, msisdn):
 
 def check_if_user_registered(msisdn):
     """Checks if the user is registered via API."""
-    registration_check_url = f"{API_BASE_URL}/is_registered_ussd?msisdn={msisdn}"
+    registration_check_url = f"https://chiweto.ch/insurance/api/is_registered_ussd?msisdn={msisdn}"
     try:
-        response = requests.get(registration_check_url, timeout=30)
+        response = requests.get(registration_check_url, timeout=10)
         if response.status_code == 200:
             response_data = response.json()
             print(f"Registration check response: {response_data}")
@@ -1378,6 +1288,7 @@ def check_if_user_registered(msisdn):
         return False
     except Exception as e:
         print(f"Unexpected error checking registration status: {str(e)}")
+        # Return False to allow new user registration when unexpected errors occur
         return False
 
 def validate_pin(msisdn, pin, session):
@@ -1387,11 +1298,11 @@ def validate_pin(msisdn, pin, session):
         return False
     
     print(f"Calling validate_pin with msisdn={msisdn}, pin={pin}, session={session}")
-    pin_validation_url = f"{API_BASE_URL}/UssdAuthentication"
+    pin_validation_url = "https://chiweto.ch/insurance/api/UssdAuthentication"
     try:
         payload = {'msisdn': msisdn, 'pin': pin}
         print(f"Sending PIN validation request: URL={pin_validation_url}, Payload={payload}")
-        response = requests.post(pin_validation_url, json=payload, timeout=30, verify=False)
+        response = requests.post(pin_validation_url, json=payload, timeout=10, verify=False)
         response.raise_for_status()
         print(f"Raw response: Status={response.status_code}, Content={response.text[:200]}")
         
@@ -1488,10 +1399,10 @@ def handle_policy_status_menu(session, user_input, msisdn):
 
     # Define status endpoints and labels
     status_endpoints = {
-        '1': f'{API_BASE_URL}/proposals/all?username={msisdn}&status=0',
-        '2': f'{API_BASE_URL}/proposals/all?username={msisdn}&status=1',
-        '3': f'{API_BASE_URL}/proposals/all?username={msisdn}&status=2',
-        '4': f'{API_BASE_URL}/proposals/all?username={msisdn}&status=3'
+        '1': f'https://chiweto.ch/insurance/api/proposals/all?username={msisdn}&status=0',
+        '2': f'https://chiweto.ch/insurance/api/proposals/all?username={msisdn}&status=1',
+        '3': f'https://chiweto.ch/insurance/api/proposals/all?username={msisdn}&status=2',
+        '4': f'https://chiweto.ch/insurance/api/proposals/all?username={msisdn}&status=3'
     }
 
     status_labels = {
@@ -1704,7 +1615,7 @@ def handle_restart():
 
 def fetch_regions_and_respond(session):
     """Fetches regions from API and generates response."""
-    laravel_url = f"{API_BASE_URL}/regions"
+    laravel_url = "https://chiweto.ch/insurance/api/regions"
     try:
         api_response = requests.get(laravel_url, timeout=10, verify=False)
         if api_response.status_code == 200:
@@ -1739,7 +1650,7 @@ def fetch_districts_and_respond(region, session):
             return generate_district_list_response(session)
 
         # API Configuration
-        laravel_url = f"{API_BASE_URL}/districts?region={region}"
+        laravel_url = f"https://chiweto.ch/insurance/api/districts?region={region}"
         headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
         try:
             api_response = requests.get(laravel_url, headers=headers, timeout=10)
@@ -1927,7 +1838,7 @@ def fetch_epas_and_respond(district, session):
             return generate_epa_list_response(session)
 
         # API Configuration
-        api_url = f"{API_BASE_URL}/epas?district={district}"
+        api_url = f"https://chiweto.ch/insurance/api/epas?district={district}"
         headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
         try:
             response = requests.get(api_url, headers=headers, timeout=20)
@@ -2105,7 +2016,7 @@ def handle_epa_navigation(user_input, session, district, msisdn):
 
 def fetch_livestocks_and_respond(session):
     """Fetches livestock from API."""
-    laravel_url = f"{API_BASE_URL}/livestock/get_all"
+    laravel_url = "https://chiweto.ch/insurance/api/livestock/get_all"
     try:
         api_response = requests.get(laravel_url, timeout=10)
         if api_response.status_code == 200:
@@ -2128,7 +2039,7 @@ def fetch_livestocks_and_respond(session):
 
 def fetch_insurance_types_and_respond(session):
     """Fetches insurance types from API."""
-    laravel_url = f"{API_BASE_URL}/livestock/get_insurance_type"
+    laravel_url = "https://chiweto.ch/insurance/api/livestock/get_insurance_type"
     try:
         api_response = requests.get(laravel_url, timeout=10)
         if api_response.status_code == 200:
@@ -2157,7 +2068,7 @@ def submit_insurance_data(session, msisdn):
         print(f"Missing insurance data: livestock_type={livestock_type}, insurance_type={insurance_type}, msisdn={msisdn}")
         return generate_response_xml("Zolakwika pa data ya inshulansi.", 2)
 
-    laravel_url = f"{API_BASE_URL}/proposal/add_ussd"
+    laravel_url = "https://chiweto.ch/insurance/api/proposal/add_ussd"
     data = {
         'phone_number': msisdn,
         'phone': msisdn,
@@ -2189,7 +2100,7 @@ def submit_farmer_registration(session, msisdn):
         print(f"Missing registration data: {data}")
         return generate_response_xml("Zolakwika pa data ya kulembetsa.", 2)
 
-    laravel_url = f"{API_BASE_URL}/register_client_ussd"
+    laravel_url = "https://chiweto.ch/insurance/api/register_client_ussd"
     headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
     
     max_retries = 2
