@@ -32,12 +32,12 @@ MANIFEST
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
-PaymentsController.php
-views copy.py
-views1.py
-views2.py
-viewsbkp.py
-nginx.conf
+farmers/PaymentsController.php
+farmers/views copy.py
+farmers/views1.py
+farmers/views2.py
+farmers/viewsbkp.py
+farmers/nginx.conf
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
