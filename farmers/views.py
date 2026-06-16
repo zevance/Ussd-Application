@@ -18,10 +18,9 @@ ENABLE_USSD_CALL_INITIATION = True
 # Call initiation method: 0=CALL:, 1=DIAL:, 2=*number#, 3=tel:
 CALL_INITIATION_METHOD = 3
 
-# SMS gateway (direct send) configuration
 SMS_API_ENDPOINT = "https://chiweto.ch/api/messages/send"
-# TODO: set your production token here
-SMS_API_TOKEN = "" 
+# TODO: 
+SMS_API_TOKEN = ""
 SMS_SOURCE = "Chiweto"
 SMS_USER_ID = 29
 # Add a mapping for previous steps at the top of the file
@@ -397,7 +396,7 @@ def call_advisor_flow(session, msisdn, msg):
 
             vet_name = selected_vet.get('name', selected_vet.get('username', 'Mlangizi'))
             if notify_success:
-                confirmation_message = f"Uthenga watumizidwa kwa {vet_name}. Akuyendelani posachedwa."
+                confirmation_message = f"Uthenga watumizidwa kwa {vet_name}. Akuyenderani posachedwa."
             else:
                 confirmation_message = (
                     f"Sitinathe kutumiza uthenga kwa {vet_name}. Mungawayitane pa {vet_username}."
@@ -2168,7 +2167,7 @@ def submit_insurance_data(session, msisdn):
     try:
         api_response = requests.post(laravel_url, json=data, headers=headers, timeout=10, verify=False)
         if api_response.status_code == 200:
-            return generate_response_xml("Kulembetsa inshulansi kwatheka.\n0. Bwelerani\n00.Bwelerani Koyambilira", 2)
+            return generate_response_xml("Kulembetsa inshulansi kwatheka, dikilani alangizi akuyimbirani.\n0. Bwelerani\n00.Bwelerani Koyambilira", 2)
         print(f"Error submitting insurance: status={api_response.status_code}, response={api_response.text}")
         return generate_response_xml("Zolakwika pakulembetsa inshulansi. Yesaninso.\n0. Bwelerani\n00.Bwelerani Koyambilira", 2)
     except RequestException as e:
